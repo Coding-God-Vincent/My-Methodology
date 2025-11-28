@@ -1,0 +1,12 @@
+# 忽略 VS Code 設定檔
+.vscode/
+
+# 忽略 Python 虛擬環境
+Methodology_venv/
+
+# 忽略 Python 快取檔案
+__pycache__/
+*.pyc
+
+# (額外建議) 如果你有用 Mac，通常也建議加上這個
+.DS_Store
