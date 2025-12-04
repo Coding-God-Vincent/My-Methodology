@@ -207,6 +207,38 @@ class Diffusion(nn.Module):
     def forward(self, state):
         return self.reverse_process(state= state)
 
-
-
+    #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
+    # forward process
+    # 傳入一個 batch 的 x_0 (batch_size, action_dim)，加躁後回傳 x_t (batch_size, action_dim)
+    # x_0 : shape (batch_size, action_dim)
+    # state : shape (batch_size, state_dim)
+    # nosie : shape (batch_size, action_dim)
+    # t : shape (batch_size)
+    def forward_process(self, x_0, noise, t):
+        # do forward process
+        # x_t shape (batch_size, action_dim)
+        x_t = (
+            extract(self.sqrt_alphas_cumprod, t, x_0.shape) * x_0 + 
+            extract(self.sqrt_one_minus_alphas_cumprod, t, x_0.shape) * noise
+        )
+        return x_t
+    
+    #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
+    # 將一個 batch 的 x_0 做 forward process 後 (得 x_t, \epsilon)，與 model(state, x_t(隨機噪聲), t) 輸出的預測噪聲 (\epsilon_\theta) 進行 MSE 計算後回傳
+    # return MSE(\epsilon, \epsilon_\theta)
+    # x_0 : shape (batch_size, action_dim)
+    # state : shape (batch_size, state_dim)
+    # return torch.tensor(loss) ex.torch.tensor(9) (shape ()), not torch.tensor([9]) (shape (1))
+    def loss(self, x_0, state):
+        # generate noise ~ N(0, I) with shape (batch_size, action_dim)
+        # don't need to set device because randn_like will automatically set the same device as the input tensor
+        noise = torch.randn_like(x_0)  
+        # generate independent times for each data in a batch (t is in the range [0, self.denoise_step])
+        # change dtype to long() because t is used to being an index in Gather() which requires dtype to be long()
+        t = torch.randint(low= 0, high= self.denoise_steps, size= (x_0.shape[0],), device= x_0.device).long()
+        # evalute x_t by doing forward process to x_0, shape (batch_size, action_dim)
+        x_t = self.forward_process(x_0= x_0, noise= noise, t= t)
+        # get predicted noise, shape (batch_size, action_dim)
+        predicted_noise = self.model(state= state, x_t= x_t, time= t)
+        return nn.functional.mse_loss(predicted_noise, noise)
 

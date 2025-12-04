@@ -28,6 +28,7 @@ from tqdm.auto import tqdm
 
 # simulation environment
 from Env.env_fixedUE import cellularEnv  # root path must be "~/NCKU/Paper/My Methodology"
+from Env.env_movingUE import EnvMove
 
 import matplotlib.pyplot as plt
 
@@ -36,10 +37,34 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import grad
 import torchvision.transforms as T
+from torch.utils.tensorboard import SummaryWriter
 
 from GAN_utils.ReplayMemory import ExperienceReplayMemory, PrioritizedReplayMemory
 # from utils.wrappers import *
 from GAN_utils.utils import initialize_weights
+
+from seed import set_seed
+from pathlib import Path
+
+set_seed(seed= 123)
+fixed_UE = False  # True if using GANDDQN env, False if LSTM_A2C env
+if fixed_UE: print("\n================================================== GANDDQN_env ==================================================\n")
+else: print("\n================================================== LSTM-A2C_env ==================================================\n")
+
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
+# 設定圖片 / log 路徑
+algo_name = 'GANDDQN'
+exp_name = 'exp1'
+log_file = 'Logs_movingUE_env' if fixed_UE == False else 'Logs_fixedUE_env'
+log_path = Path("/home/super_trumpet/NCKU/Paper/My Methodology/Logs") / log_file / algo_name / exp_name / 'tensorboard'
+# generate log writer
+writer = SummaryWriter(log_dir= log_path)
+
+# 要看 tensorboard 結果，輸入在 terminal 中他會給你一個網址
+# tensorboard --logdir "/home/super_trumpet/NCKU/Paper/My Methodology/Logs/"algo_name"/"exp_name"/tensorboard"
+# tensorboard --logdir "/home/super_trumpet/NCKU/Paper/My Methodology/Logs/GANDDQN/exp1/tensorboard"
+# 程式跑下去之後就可以用另一個 terminal 開啟 tensorboard，接著你任何時候想看進度就去點一下 tensorboard 頁面的重置就好了
 
 #=============================================================================================================================================#
 #%%  # 就像 Ipynb 一樣的功能，把程式碼切成一個一個的 Cell
@@ -641,7 +666,7 @@ epsilon_by_frame = lambda frame_idx: epsilon_final + (epsilon_start - epsilon_fi
 
 # 總共會有 10000 個 learning windows
 # 一個 learning windows = 2000 timeslot (0.5ms) = 1s
-total_timesteps = 10
+total_timesteps = 10000
 # parameters of celluar environment
 ser_cat_vec = ['volte', 'embb_general', 'urllc']
 band_whole_no = 10 * 10**6  # 10MHz
@@ -649,9 +674,12 @@ band_per = 1 * 10**6  # bandwidth allocation resolution : 1MHz
 qoe_weight = [1, 1, 1]
 se_weight = 0.01
 dl_mimo = 64  # MIMO 天線數
-learning_window = 2000  # 一個 episode
-env = cellularEnv(ser_cat = ser_cat_vec, learning_windows = learning_window, dl_mimo = dl_mimo)
+learning_windows = 2000  # 一個 episode
+UE_no = 100 if fixed_UE else 1200
+if fixed_UE: env = cellularEnv(ser_cat= ser_cat_vec, learning_windows= learning_windows, dl_mimo= dl_mimo, UE_max_no= UE_no)
+else: env = EnvMove(UE_max_no= UE_no, ser_prob= np.array([1, 2, 3], dtype= np.float32), learning_windows= learning_windows, dl_mimo= dl_mimo)
 env.countReset()  # 初始化各計數器 (每個 learning window 都會重置一次)
+if not fixed_UE: env.user_move()  # user move in LSTM-A2C env
 env.activity()  # 開始第一個 timeslot，指派各 UE readtime，並依照 readtime 決定是否要新增封包
 
 # 設定 action_space
@@ -693,10 +721,11 @@ for frame in tqdm(range(1, total_timesteps + 1)):
     for i in itertools.count():  # itertools.count() : 從 0 開始到無限
         env.scheduling()  # 每一個 timeslots 做一次下層分配
         env.provisioning()  # 根據 UE 分到的 RB 個數算出當前 timeslot 的 SE、SSR
-        if i == (learning_window - 1):  # 分 1999 次 (下 1s 開始前的一個 timeslot)
+        if i == (learning_windows - 1):  # 分 1999 次 (下 1s 開始前的一個 timeslot)
             break
         else:
-            env.bufferClear()  # 維護使用者對應的 Queue (還沒分配出去的封包繼續留在 buffer 中)
+            # **在 env.provisioning() 已經呼叫過一次 env.bufferClear() 了，故這邊不用再重複呼叫
+            # env.bufferClear()  # 維護使用者對應的 Queue (還沒分配出去的封包繼續留在 buffer 中)
             env.activity()  # 指派 UE readtime，並依照 readtime 決定是否產生封包
     
     # 做完一整個 learning window，算這個 learning window 的 reward
@@ -711,6 +740,13 @@ for frame in tqdm(range(1, total_timesteps + 1)):
     rewards.append(reward)
     utilities.append(utility)
 
+    writer.add_scalar(tag= 'qoe/volte', scalar_value= qoe[0], global_step= frame)
+    writer.add_scalar(tag= 'qoe/embb_general', scalar_value= qoe[1], global_step= frame)
+    writer.add_scalar(tag= 'qoe/urllc', scalar_value= qoe[2], global_step= frame)
+    writer.add_scalar(tag= 'se', scalar_value= se[0], global_step= frame)
+    writer.add_scalar(tag= 'reward', scalar_value= reward, global_step= frame)
+    writer.add_scalar(tag= 'utility', scalar_value= utility, global_step= frame)
+
     # 準備做下一次的上層，取出 state
     # 該 state 為上一個 learning window 中，各網路切片欲傳輸的封包總數
     observation = state_update(env.tx_pkt_no, env.ser_cat)
@@ -723,6 +759,10 @@ for frame in tqdm(range(1, total_timesteps + 1)):
     
     # 結束一個 learning window，重設相關計數器
     env.countReset()
+
+    # if using the env of LSTM-A2C then move the users
+    if not fixed_UE: env.user_move()
+
     # 設定各 UE readtime，並根據該 readtime 決定是否新增封包
     env.activity()
     
@@ -775,7 +815,7 @@ ma_utility = moving_average(utilities_, window_size = 200)
 
 # loss figure (figure(2))
 model.plot_loss()
-plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcome/GAN_DDQN/loss.png")
+plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_movingUE_env/GANDDQN/exp1/loss.png")
 
 # qoe figure (figure(3))
 plt.figure(3)
@@ -787,7 +827,7 @@ plt.plot(ma_qoe_volte)
 plt.plot(ma_qoe_embb)
 plt.plot(ma_qoe_urllc)
 plt.legend(["VoLTE", "Video", "URLLC"])
-plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcome/GAN_DDQN/QoE.png")
+plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_movingUE_env/GANDDQN/exp1/QoE.png")
 
 # se figure (figure(4))
 plt.figure(4)
@@ -796,7 +836,7 @@ plt.title('SE')
 plt.xlabel('Episode')
 plt.ylabel('bits/Hz')
 plt.plot(ma_SE)
-plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcome/GAN_DDQN/SE.png")
+plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_movingUE_env/GANDDQN/exp1/SE.png")
 
 # utility figure (figure(5))
 plt.figure(5)
@@ -805,7 +845,7 @@ plt.title('Utility')
 plt.xlabel("Episode")
 plt.ylabel("utility")
 plt.plot(ma_utility)
-plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcome/GAN_DDQN/Utility.png")
+plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_movingUE_env/GANDDQN/exp1/Utility.png")
 
-
+print("Graph Saved")
 # %%

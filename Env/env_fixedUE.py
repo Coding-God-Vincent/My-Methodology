@@ -129,8 +129,10 @@ class cellularEnv(object):
         # 依照前面的機率分布產生各 UE 要使用的網路切片種類，shape : (UE_max_no)
         self.UE_cat = np.random.choice(self.ser_cat, self.UE_max_no, p=self.ser_prob)
 
-        # tx_pkt_no 為每個類型網路切片成功傳輸的封包數的計數器，唯一個長度為 3 的 np.ndarray
+        # tx_pkt_no 為每個類型的網路切片於一個 learning window 中所要傳輸的封包總數，為一個長度為 3 的 np.ndarray
         self.tx_pkt_no = np.zeros(len(self.ser_cat))
+        # tx_bit_no 為每種類型的網路切片於一個 learning window 中所要傳輸的 bits 數
+        self.tx_bit_no = np.zeros(len(self.ser_cat))
 
     #=======================================================================================================================================#
     # 通道模型 (只考慮大尺度衰弱 (考慮 path loss 和 shadow fading)) : 會得出每一個 UE 的通道狀況 (chan_loss, shape = (UE_max_no, 1))。 unit : dB
@@ -316,6 +318,7 @@ class cellularEnv(object):
                     # 依照 UE 隸屬的網路切片規則來產生封包
                     if self.UE_cat[ue_id] == 'volte':
                         self.UE_buffer[buf_ind, ue_id] = 40 * 8  # 產生一個大小為 40Byte 的封包放到剛剛的找到的空位
+                        self.tx_bit_no[0] += 40 * 8  # 紀錄該封包的 bits 數到 volte 欄位
                         self.UE_readtime[ue_id] = np.random.uniform(0,160 * 10 ** (-3), 1).squeeze()  # 每次產生完封包之後都會再隨機產生 readtime
 
                     elif self.UE_cat[ue_id] == 'embb_general':
@@ -325,6 +328,7 @@ class cellularEnv(object):
                             tmp_buffer_size = 2000
                         # tmp_buffer_size = np.random.choice([1*8*10**6, 2*8*10**6, 3*8*10**6, 4*8*10**6, 5*8*10**6])
                         self.UE_buffer[buf_ind, ue_id] = tmp_buffer_size
+                        self.tx_bit_no[1] += tmp_buffer_size
                         # 再產生一次 readtime
                         self.UE_readtime[ue_id] = np.random.pareto(1.2, 1).squeeze() * 6 * 10 ** -3  
                         if self.UE_readtime[ue_id] > 12.5 * 10 ** -3:
@@ -339,6 +343,7 @@ class cellularEnv(object):
                         # 大封包
                         # tmp_buffer_size = np.random.choice([0.3*8*10**6, 0.4*8*10**6, 0.5*8*10**6, 0.6*8*10**6, 0.7*8*10**6])  # buffer_size 介於 0.3 ~ 0.7M bits
                         self.UE_buffer[buf_ind,ue_id] = tmp_buffer_size
+                        self.tx_bit_no[2] += tmp_buffer_size
                         # 再產生一個 readtime
                         self.UE_readtime[ue_id]  = np.random.exponential(180* 10 ** -3, 1).squeeze()
 
@@ -353,14 +358,16 @@ class cellularEnv(object):
         self.sys_clock = round(self.sys_clock,4)
 
     #=======================================================================================================================================#   
-    # 取得環境的狀態，即個網路切片分別要傳的封包個數 (d0, d1, d2)
+    # 取得環境的狀態，即一個 learning window 中各網路切片分別要傳的封包個數 (d0, d1, d2) 以及總 bits 數
     def get_state(self):
         #state = np.zeros(len(self.ser_cat))
         #for ser_name in self.ser_cat:
         #    ue_index = np.where(self.UE_cat == ser_name)
         #    state[self.ser_cat.index(ser_name)] = np.where(self.UE_buffer[0,ue_index[0]] != 0)[0].size
-        state = self.tx_pkt_no
-        return state
+        total_packets = self.tx_pkt_no
+        total_bits = self.tx_bit_no
+
+        return total_packets, total_bits
     
     #=======================================================================================================================================#
     # 一個 Learning Window 中每一個 timeslot 都會執行
@@ -438,7 +445,7 @@ class cellularEnv(object):
         se = self.sys_se_per_frame / (self.learning_windows / self.time_subframe)
         # ee_total = se_total/10**(self.BS_tx_power/10)   
         
-        # 2. 整個 Learning Window 滿足 SLA 傳送成功的封包總數 / 整個 Learning Window 的封包總數
+        # 2. 各網路切片整個 Learning Window 滿足 SLA 傳送成功的封包總數 / 各網路切片整個 Learning Window 的封包總數
         qoe = self.succ_tx_pkt_no / self.tx_pkt_no 
         
         return qoe, se
@@ -493,6 +500,7 @@ class cellularEnv(object):
         self.UE_buffer = np.zeros(self.UE_buffer.shape)
         self.UE_buffer_backup = np.zeros(self.UE_buffer.shape)
         self.UE_latency = np.zeros(self.UE_buffer.shape)
+        self.tx_bit_no = np.zeros(len(self.ser_cat))
           
 #=======================================================================================================================================#
 # 模擬封包傳輸給 ue_id 的 UE 的過程 : 所有封包共用 rate，從 index0 的開始傳

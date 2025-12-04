@@ -150,7 +150,7 @@ class D2AC_OPT(BasePolicy):
         
     #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
     # 輸入一個 batch 的資料 (已經有做過 process_fn 的 Batch，裡面已經有 Batch.returns) 來更新一次 Twin Q-Network (不包括 Target Twin Q-network)
-    # 最後會回傳一個 batch 中各資料得出的兩個 Critic loss 的總和 (torch.tensor with shape (1))
+    # 最後會回傳一個 batch 中各資料得出的兩個 Critic loss 的總和 (torch.tensor with shape ())
     #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
     '''recall
     * Critic loss (受 n_step 影響，每 n_step 更新一次) : 
@@ -172,7 +172,7 @@ class D2AC_OPT(BasePolicy):
         critic_loss.backward()
         self.critic_optim.step()
         return critic_loss
-        
+
     #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
     # 傳入一個 batch 的資料，並用此 batch 去算這個 batch 得出的 Actor_loss 並回傳。torch.tensor with shape(1)
     #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#  
@@ -187,17 +187,29 @@ class D2AC_OPT(BasePolicy):
         update : bool = False  # 是否在此函式中進行 actor 的參數更新
     ):
         state = to_torch(batch.obs, dtype= torch.float32, device= self.device)
+        # 1. reconstruction loss
+        # shape (batch_size, action_dim)
+        real_actions = to_torch(batch.act, dtype= torch.float32, device= self.device)
+        # return mse of real_noises & predicted noises of a batch
+        # torch.tensor with shape(), not shape (1)
+        recon_loss = self.actor.loss(x_0= real_actions, state= state)
+
+        # 2. Policy loss
         action = self.forward(batch= batch, state= 'obs', model= 'actor').act
         action = to_torch(action, dtype= torch.float32, device= self.device)
         # mean() 只接受 torch.float32，而這邊 q_min 是從神經網路出來，自然是 torch.float32
-        actor_loss = -self.critic.q_min(state= state, action= action).mean()  
+        # torch.tensor with shape(), not shape (1)
+        policy_loss = -self.critic.q_min(state= state, action= action).mean()  
         
+        actor_loss = policy_loss + 1 * recon_loss
+
         if update:
             self.actor_optim.zero_grad()
             actor_loss.backward()
             self.actor_optim.step()
 
-        return actor_loss
+        return actor_loss, policy_loss, recon_loss
+        
 
     #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
     # soft update target actor and target Twin Q network
@@ -217,7 +229,7 @@ class D2AC_OPT(BasePolicy):
         # update DoubleCritic through batch
         critic_loss = self.update_critic(batch= batch)
         # update Actor through batch
-        actor_loss = self.update_policy(batch= batch, update= False)
+        actor_loss, policy_loss, recon_loss = self.update_policy(batch= batch, update= False)
         self.actor_optim.zero_grad()
         actor_loss.backward()
         self.actor_optim.step()
@@ -226,8 +238,10 @@ class D2AC_OPT(BasePolicy):
 
         # return actor loss & critic loss via dict
         return {
-            'critic_loss' : critic_loss.item(), 
-            'actor_loss' : actor_loss.item()
+            'critic_loss' : critic_loss,  # torch.tensor with shape ()
+            'actor_loss' : actor_loss,  # torch.tensor with shape ()
+            'policy_loss' : policy_loss,
+            'recon_loss' : recon_loss
         }
     
     #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
