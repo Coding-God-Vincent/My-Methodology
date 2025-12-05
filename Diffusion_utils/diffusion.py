@@ -33,7 +33,8 @@ class Diffusion(nn.Module):
         max_action,  # 1
         beta_schedule= 'vp',
         denoise_steps= 5,
-        clip_denoised= True
+        clip_denoised= True,
+        DDIM= False
     ):
         super().__init__()
         self.state_dim = state_dim
@@ -44,6 +45,7 @@ class Diffusion(nn.Module):
         self.denoise_steps = denoise_steps
         self.clip_denoised = clip_denoised
         self.beta_schedule = beta_schedule
+        self.DDIM = DDIM
 
         '''
         we use register buffer to register the values with the class,
@@ -67,7 +69,7 @@ class Diffusion(nn.Module):
         alphas_cumprod = torch.cumprod(alphas, dim= 0)
         # alphas_cumprod_prev[t] = alphas_cumprod[t-1] = alpha_bar_(t-1)
         # alphas_cumprod_prev = [1, alphas_cumprod[0], alphas_cumprod[1], ..., alphas_cumprod[t-2]] (t: denoise_steps)
-        alphas_cumprod_prev = torch.cat([torch.tensor([1]), alphas_cumprod[:-1]])  # alphas_cumprod[:-1] = [alphas_cumprod[0], alphas_cumpord[1], ..., alphas_cumprod[t-2]]
+        alphas_cumprod_prev = torch.cat([torch.tensor([1]), alphas_cumprod[:-1]])  # alphas_cumprod[:-1] = [alphas_cumprod[0], alphas_cumprod[1], ..., alphas_cumprod[t-2]]
         
         self.register_buffer('alphas', alphas)
         self.register_buffer('batas', betas)
@@ -77,7 +79,7 @@ class Diffusion(nn.Module):
         #-------------------------------------------------------------------------------------------------------------------------------------------#
         # sqrt_alphas_cumprod[t] = sqrt(alpha_bar_t), shape (denoise_steps)
         self.register_buffer('sqrt_alphas_cumprod', torch.sqrt(alphas_cumprod))
-        # sqrt_one_minus_alphas_cumpord[t] = sqrt(1 - alpha_bar_t)
+        # sqrt_one_minus_alphas_cumprod[t] = sqrt(1 - alpha_bar_t)
         self.register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(1. - alphas_cumprod))
         # log_one_minus_alphas_cumprod[t] = log(1 - alpha_bar_t)
         self.register_buffer('log_one_minus_alphas_cumprod', torch.log(1. - alphas_cumprod))
@@ -153,13 +155,13 @@ class Diffusion(nn.Module):
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
     
     #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
-    # 對一個 batch 中各資料做一次 denoise 後得到各資料的 x_(t-1)
+    # 對一個 batch 中各資料做一次 denoise 後得到各資料的 x_(t-1) by DDPM
     # x_t : shape (batch_size, action_dim)
     # t : shape (batch_size)
     # state : shape (batch_size, state_dim)
-    # return x_(t-1) of each data in a batch, shape (batch_size, action_dim)
+    # return x_(t-1) of each data in a batch by DDPM, shape (batch_size, action_dim)
     #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
-    def single_denoise_step(self, x_t, t, state):
+    def DDPM_single_denoise_step(self, x_t, t, state):
         batch_size, _ = x_t.shape
 
         # do single denoise step of each data and gain their posterior distributions parameters
@@ -178,6 +180,24 @@ class Diffusion(nn.Module):
         return model_mean + (0.5 * model_log_variance).exp() * nonzero_mask * noise
         
     #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
+    # 對一個 batch 中各資料做一次 denoise 後得到各資料的 x_(t-1) by DDIM
+    # x_t : shape (batch_size, action_dim)
+    # t : shape (batch_size)
+    # state : shape (batch_size, state_dim)
+    # return x_(t-1) of each data in a batch by DDIM, shape (batch_size, action_dim)
+    #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
+    def DDIM_single_denoise_step(self, x_t, t, state):
+        batch_size, _ = x_t.shape
+        # predicted_epsilon of each data in batch, shape (batch_size, action_dim)
+        predicted_noise_GDM= self.model(state= state, x_t= x_t, time= t)
+        # x_0_hat of each data in a batch, shape (batch_size, action_dim)
+        x_0_hat = self.x_0_hat(x_t= x_t, t= t, predicted_noise_GDM= predicted_noise_GDM)
+        return (
+            extract(torch.sqrt(self.alphas_cumprod_prev), t, x_t.shape) * x_0_hat + 
+            extract(torch.sqrt(1. - self.alphas_cumprod_prev), t, x_t.shape) * predicted_noise_GDM
+        )
+
+    #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
     # 對一個 batch 中各資料做一遍完整的 (self.denoise_steps 次 denoise) reverse process 後得到各資料最終的 action (clampped)。
     # state : shape (batch_size, state_dim)
     # x_t_shape : tuple (batch_size, action_dim)
@@ -194,7 +214,10 @@ class Diffusion(nn.Module):
             # will be used in extract() as indices of gather() so its dtype must be torch.long, shape (batch_size)
             timesteps = torch.full((batch_size,), i, device= self.device, dtype= torch.long)  
             # do the ith denoise step to each data in a batch then return x_(t-1) of each data, shape (batch_size, action_dim)
-            x_next = self.single_denoise_step(x_t= x_t, t= timesteps, state= state)
+            # DDPM
+            if not self.DDIM: x_next = self.DDPM_single_denoise_step(x_t= x_t, t= timesteps, state= state)
+            # DDIM
+            else: x_next = self.DDIM_single_denoise_step(x_t= x_t, t= timesteps, state= state)
         
         # return torch.tanh(x_next)
         return torch.clamp(x_next, -self.max_action, self.max_action)

@@ -1,0 +1,4 @@
+跟 exp4 做比較。比看看使用 DDIM with 2 denoise steps (exp4) vs DDPM with 2 denoise steps
+* using DDPM in diffusion
+* denoise step = 2
+* GANDDQN env (fixedUE_env)

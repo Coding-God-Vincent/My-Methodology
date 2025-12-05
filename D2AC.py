@@ -14,15 +14,6 @@ from pathlib import Path
 from pprint import pprint
 from seed import set_seed
 
-#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
-# 環境參數
-set_seed(seed= 123)
-fixed_UE = True  # True if using GANDDQN env, False if LSTM_A2C env
-if fixed_UE: print("\n================================================== GANDDQN_env ==================================================\n")
-else: print("\n================================================== LSTM-A2C_env ==================================================\n")
-
-#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
-
 
 '''改善的地方
 * clamp(-1, 1) 的作法可能過於強硬，可以改為使用 tanh
@@ -34,17 +25,27 @@ else: print("\n================================================== LSTM-A2C_env =
 '''
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
+DDIM = False  # True if using DDIM
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
+# 環境參數
+set_seed(seed= 123)
+fixed_UE = True  # True if using GANDDQN env, False if LSTM_A2C env
+if fixed_UE: print("\n================================================== GANDDQN_env ==================================================\n")
+else: print("\n================================================== LSTM-A2C_env ==================================================\n")
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
 # 設定圖片 / log 路徑
 algo_name = 'D2AC'
-exp_name = 'exp3'
+exp_name = 'exp5'
 log_file = 'Logs_movingUE_env' if fixed_UE == False else 'Logs_fixedUE_env'
 log_path = Path("/home/super_trumpet/NCKU/Paper/My Methodology/Logs") /log_file / algo_name / exp_name / 'tensorboard'
 # generate log writer
 writer = SummaryWriter(log_dir= log_path)
 
 # 要看 tensorboard 結果，輸入在 terminal 中他會給你一個網址
-# tensorboard --logdir "/home/super_trumpet/NCKU/Paper/My Methodology/Logs/"algo_name"/"exp_name"/tensorboard"
-# tensorboard --logdir "/home/super_trumpet/NCKU/Paper/My Methodology/Logs/D2AC/exp1/tensorboard"
+# tensorboard --logdir "/home/super_trumpet/NCKU/Paper/My Methodology/Logs/Logs_fixedUE_env/"algo_name"/"exp_name"/tensorboard"
+# tensorboard --logdir "/home/super_trumpet/NCKU/Paper/My Methodology/Logs/Logs_fixedUE_env/D2AC/exp4/tensorboard"
 # 程式跑下去之後就可以用另一個 terminal 開啟 tensorboard，接著你任何時候想看進度就去點一下 tensorboard 頁面的重置就好了
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
@@ -78,7 +79,6 @@ def state_preprocessing(state):
         preproc_state = preproc_state / Max_
     return preproc_state
         
-
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------#
 # 回傳各網路切片所分到的頻寬量 (Hz)
 # state : preprocessed state, np.array, shape (state_dim)
@@ -136,7 +136,7 @@ state_dim = len(ser_cat)
 action_dim = len(ser_cat)
 max_action = 1
 beta_schedule = 'vp'  # 'vp', 'cosin', 'linear'
-denoise_step = 6
+denoise_step = 1  # 6
 actor_lr = 0.001
 critic_lr = 0.001
 weight_decay = 0
@@ -170,7 +170,8 @@ actor = Diffusion(
     beta_schedule= beta_schedule,
     denoise_steps= denoise_step,
     clip_denoised= True,
-    device= device
+    device= device,
+    DDIM= DDIM
 ).to(device= device)
 actor_optim = torch.optim.AdamW(
     # Diffusion inherits nn.Module, so actor.parameters() will be redirect to the parameters of all nn.Modules included in actor
@@ -369,7 +370,7 @@ plt.plot(ma_qoe_volte)
 plt.plot(ma_qoe_embb)
 plt.plot(ma_qoe_urllc)
 plt.legend(["VoLTE", "Video", "URLLC"])
-plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_fixedUE_env/D2AC/exp3/QoE.png")
+plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_fixedUE_env/D2AC/exp5/QoE.png")
 
 # se figure (figure(4))
 plt.figure(4)
@@ -378,7 +379,7 @@ plt.title('SE')
 plt.xlabel('Episode')
 plt.ylabel('bits/Hz')
 plt.plot(ma_SE)
-plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_fixedUE_env/D2AC/exp3/SE.png")
+plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_fixedUE_env/D2AC/exp5/SE.png")
 
 # utility figure (figure(5))
 plt.figure(5)
@@ -387,7 +388,7 @@ plt.title('Utility')
 plt.xlabel("Episode")
 plt.ylabel("utility")
 plt.plot(ma_utility)
-plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_fixedUE_env/D2AC/exp3/Utility.png")
+plt.savefig("/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_fixedUE_env/D2AC/exp5/Utility.png")
 
 # loss figure (figure(6))
 # plt.figure(6)

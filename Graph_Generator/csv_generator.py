@@ -57,10 +57,10 @@ target_tags = ['qoe/volte', 'qoe/embb_general', 'qoe/urllc', 'se', 'reward', 'ut
 '''*****algo1 : D2AC'''
 # 想將 tensorboard 中的 event 內容轉成各個 csv 檔後放在 : /home/super_trumpet/NCKU/Paper/My Methodology/Outcome/Combine/D2AC_csv 中
 # 例如 utility.csv 會放在 /home/super_trumpet/NCKU/Paper/My Methodology/Outcome/Combine/D2AC_csv/utility.csv
-algo_name = 'D2AC'
+algo_name = 'D2AC_DDPM_1'
 # # file_path : 要存所有 .csv 檔的位址 (還沒依照算法分資料夾) (Instance of Path)
 file_path = Path('/home/super_trumpet/NCKU/Paper/My Methodology/Outcomes/Outcome_fixedUE_env/Combine')
-event_path = '/home/super_trumpet/NCKU/Paper/My Methodology/Logs/Logs_fixedUE_env/D2AC/exp3/tensorboard/events.out.tfevents.1764682387.SuperTrumpet.102054.0'
+event_path = '/home/super_trumpet/NCKU/Paper/My Methodology/Logs/Logs_fixedUE_env/D2AC/exp5/tensorboard/events.out.tfevents.1764886949.SuperTrumpet.13417.0'
 # 按照各指標將結果存入各種不同的 csv 檔
 generate_csv(EA= generate_EA(event_path= event_path), original_csv_path= generate_original_csv_path(algo_name= algo_name, file_path= file_path), target_tags= target_tags)
 
